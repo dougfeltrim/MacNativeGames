@@ -9,6 +9,7 @@
 #include <time.h>
 #include "game_patches.h"
 #include "game_version.h"
+#include "totk_tier.h"
 uint32_t runtime_thread_current_handle(void);
 
 /* Real-time frame step (TOTK_REALTIME=0: as shipped). ksys::VFR (singleton pointer main+0x2d1e170, built at main+0x183eb98)
@@ -353,7 +354,7 @@ static unsigned excl_acquire(uint8_t *code, size_t n) {
    the game asks for (PlacementMgr fails after a 320 MB render budget at main+0x1804c44): not done.
    main+0x1821674 movk x8, #0x44c8, lsl #48 (1600.0) -> movk x8, #0x44f0, lsl #48 (1920.0). */
 static void patch_render_1080(Module *m) {
-    const char *e = getenv("TOTK_RENDER_RES");
+    const char *e = totk_tier_default(getenv("TOTK_RENDER_RES"), "720", NULL);
     if (e && !strcmp(e, "900")) { fprintf(stderr, "[botw] docked render size 1600x900, as shipped (TOTK_RENDER_RES=900)\n"); return; }
     static const struct { uint32_t off, original; } check[] = {
         {0x1821670u, 0xd2a89e08u}, {0x1821674u, 0xf2e89908u}, {0x1821678u, 0xf9094b88u},
@@ -362,12 +363,16 @@ static void patch_render_1080(Module *m) {
         uint32_t w; memcpy(&w, m->base + check[i].off, 4);
         if (w != check[i].original) {
             fprintf(stderr, "[botw] render size main+%#x: found %08x expected %08x\n", check[i].off, w, check[i].original);
-            runtime_fail("1080p render size requires the 1.6.0 display-mode instructions");
+            runtime_fail("render size requires the 1.6.0 display-mode instructions");
         }
     }
-    const uint32_t movk = 0xf2e89e08u;   /* movk x8, #0x44f0, lsl #48 */
+    const int w720 = e && (!strcmp(e, "720") || !strcmp(e, "1280x720"));
+    const uint32_t movk = w720 ? 0xf2e89408u    /* movk x8, #0x44a0, lsl #48 (1280.0): tier 1 preset */
+                               : 0xf2e89e08u;   /* movk x8, #0x44f0, lsl #48 (1920.0) */
     memcpy(m->base + 0x1821674u, &movk, 4);
-    fprintf(stderr, "[botw] docked render size 1920x1080 (shipped: 1600x900; TOTK_RENDER_RES=900 keeps it)\n");
+    fprintf(stderr, "[botw] docked render size %s\n",
+            w720 ? "1280x720 (tier 1 preset; TOTK_RENDER_RES=720/1280x720, =900 as shipped)"
+                 : "1920x1080 (shipped: 1600x900; TOTK_RENDER_RES=900 keeps it)");
 }
 void runtime_game_patches(Module *m) {
     fprintf(stderr, "[botw] %s game-code patches\n", TOTK_GAME_VERSION);
