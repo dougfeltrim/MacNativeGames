@@ -31,6 +31,7 @@
 #include "nvn_dirty.h"
 #include "totk_vpool.h"
 #include "totk_lifelog.h"
+#include "totk_tier.h"
 #include <mach/mach_time.h>
 #include <setjmp.h>
 #include <signal.h>
@@ -2499,7 +2500,53 @@ void nvn_gpu_recent(double *avg, double *p95, unsigned *n) {
     qsort(v, c, sizeof *v, dcmp); *n = c; *avg = c ? s / c : -1; *p95 = c ? v[(c * 95) / 100 < c ? (c * 95) / 100 : c - 1] : -1;
 }
 static int dcmp(const void *a, const void *b) { double x = *(const double *)a, y = *(const double *)b; return (x > y) - (x < y); }
+// ---------- TOTK_BENCH: per-frame samples for the published M1 benchmarks (docs/m1-benchmarks.md) ----------
+// TOTK_BENCH=<n> (n a multiple of TWIN, at most BENCH_MAX): the n frames after the warm-up window (frames 301..300+n)
+// are sampled and flushed as one [bench] JSON line at the end; TOTK_BENCH_EXIT=1 quits right after the flush so a
+// scripted run measures a fixed scene. The collection reuses the timing windows: at each tsummary the window holds
+// exactly the frames since the previous one, so the pushed entries are copied before they are overwritten. GPU spans
+// arrive 8 frames late, so gpu_ms has up to a few samples fewer than frame_ms and is not aligned per frame: the report
+// uses it for the GPU's p50/p95 over the window, not for per-frame correlation.
+#define BENCH_MAX 8192
+static double g_bench_iv[BENCH_MAX], g_bench_gpu[BENCH_MAX], g_bench_pres[BENCH_MAX];
+static unsigned g_bench_n, g_bench_gpu_n, g_bench_pres_n;
+static int g_bench_exit;
+static int bench_frames(void) {
+    static int n = -1;
+    if (n < 0) {
+        const char *e = getenv("TOTK_BENCH");
+        n = e && *e ? atoi(e) : 0;
+        if (n > 0 && n % TWIN) { LOG("[bench] TOTK_BENCH must be a multiple of %u (got %d): benchmark off", TWIN, n); n = 0; }
+        if (n > BENCH_MAX) { LOG("[bench] TOTK_BENCH capped at %u", BENCH_MAX); n = BENCH_MAX; }
+        if (n > 0) { const char *x = getenv("TOTK_BENCH_EXIT"); g_bench_exit = x && strcmp(x, "0") != 0; }
+    }
+    return n;
+}
+static void bench_flush(void) {
+    fprintf(stderr, "[bench] {\"frame_ms\":[");
+    for (unsigned i = 0; i < g_bench_n; i++) fprintf(stderr, "%s%.2f", i ? "," : "", g_bench_iv[i]);
+    fprintf(stderr, "],\"gpu_ms\":[");
+    for (unsigned i = 0; i < g_bench_gpu_n; i++) fprintf(stderr, "%s%.2f", i ? "," : "", g_bench_gpu[i]);
+    fprintf(stderr, "],\"present_ms\":[");
+    for (unsigned i = 0; i < g_bench_pres_n; i++) fprintf(stderr, "%s%.2f", i ? "," : "", g_bench_pres[i]);
+    fprintf(stderr, "],\"tier\":%d}\n", totk_tier());
+    fflush(stderr);
+    if (g_bench_exit) _exit(0);
+}
+static void bench_collect(uint64_t frame) {
+    int n = bench_frames(); if (n <= 0) return;
+    if (frame <= (uint64_t)TWIN || frame > (uint64_t)(TWIN + n)) return;   // the first window warms up
+    static uint64_t p0, p3; unsigned pushed, start;
+    pushed = (unsigned)(g_tn[0] - p0); if (pushed > TWIN) pushed = TWIN; start = (unsigned)(p0 % TWIN);
+    for (unsigned i = 0; i < pushed && g_bench_n < BENCH_MAX; i++) g_bench_iv[g_bench_n++] = g_tw[0][(start + i) % TWIN];
+    pushed = (unsigned)(g_tn[3] - p3); if (pushed > TWIN) pushed = TWIN; start = (unsigned)(p3 % TWIN);
+    for (unsigned i = 0; i < pushed && g_bench_gpu_n < BENCH_MAX; i++) { double v = g_tw[3][(start + i) % TWIN]; if (v > 0) g_bench_gpu[g_bench_gpu_n++] = v; }
+    for (unsigned i = 0; i < g_presn && g_bench_pres_n < BENCH_MAX; i++) g_bench_pres[g_bench_pres_n++] = g_pres_iv[i];   // before tsummary resets it
+    p0 = g_tn[0]; p3 = g_tn[3];
+    if (frame == (uint64_t)(TWIN + n)) bench_flush();
+}
 static void tsummary(uint64_t frame) {
+    bench_collect(frame);
     char line[1024]; size_t o = 0;
     for (int k = 0; k < 6; k++) {
         unsigned n = g_tn[k] < TWIN ? g_tn[k] : TWIN; if (!n) continue;
