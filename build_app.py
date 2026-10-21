@@ -1319,6 +1319,14 @@ def metal_cache_users():
     return sorted(users)
 
 
+def phys_ram_bytes():
+    """This Mac's physical RAM (sysctl hw.memsize), or None when it cannot be read (the caller keeps today's behaviour)."""
+    try:
+        return int(subprocess.check_output(['sysctl', '-n', 'hw.memsize'], text=True, stderr=subprocess.DEVNULL).strip())
+    except (OSError, subprocess.CalledProcessError, ValueError):
+        return None
+
+
 def step_warm_metal(tree, out, logs):
     """Compile the app's startup shaders once into this Mac's Metal cache (2026-10-18). The game compiles each of them from
     source when it first meets it, and Metal keeps the result keyed by the source text, the compile options and the length
