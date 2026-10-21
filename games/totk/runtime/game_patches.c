@@ -1,4 +1,5 @@
 #include "game_patches.h"
+#include "totk_tier.h"
 #include "aspect_patch.h"
 #include "game_version.h"
 #include "world_survey.h"
@@ -265,7 +266,7 @@ static const GamePatch render_res_sites[3] = {
     {GAME_ADDR(0xc630c8), 0x5e21d921, 0xbd0cc660, "scvtf s1, s9 -> str s0, [x19, #0xcc4]"},
 };
 static int render_res(unsigned *w, unsigned *h) {
-    const char *e = getenv("TOTK_RENDER_RES");
+    const char *e = totk_tier_default(getenv("TOTK_RENDER_RES"), "1280x720", NULL);   // tier 1 preset: 720p scene, MetalFX upscales
     if (!e || !*e || !strcmp(e, "0")) return 0;
     if (sscanf(e, "%ux%u", w, h) != 2 || *w < 64 || *h < 64 || *w > 4096 || *h > 4096) runtime_fail("TOTK_RENDER_RES must be <width>x<height>");
     return 1;
