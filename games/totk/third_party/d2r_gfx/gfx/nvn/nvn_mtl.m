@@ -26,6 +26,7 @@
 #include "totk_mfx_up.h"
 #include "totk_taa.h"
 #include "totk_sysload.h"
+#include "totk_tier.h"
 /* TOTK_MFX_UPSCALE: for the one compose draw that samples the smaller scene, the scene texture and its MetalFX upscale
    (mfxup_draw before the draw, encode_args swaps the binding). */
 static __strong id<MTLTexture> g_mfxup_src, g_mfxup_out; static __unsafe_unretained id g_mfxup_sh;
@@ -528,6 +529,10 @@ void mtl_init(void) {
     g_dev = MTLCreateSystemDefaultDevice();
     if (!g_dev) MDIE("没有 Metal 设备");
     if (!g_dev.hasUnifiedMemory) MDIE("需要统一内存设备（零拷贝内存池）");
+#if !TARGET_OS_IPHONE
+    MLOG("GPU tier %d（%s，%llu GB RAM）：tier 1 预设 720p + MetalFX（TOTK_TIER=2 关闭）", totk_tier(),
+         g_dev.name.UTF8String ?: "", (unsigned long long)(NSProcessInfo.processInfo.physicalMemory >> 30));
+#endif
     g_q = [g_dev newCommandQueue];
     MTLResidencySetDescriptor *rd = [MTLResidencySetDescriptor new];
     rd.initialCapacity = 4096;
@@ -6920,6 +6925,7 @@ static int warm_threads(void) {
         int d = 1;
 #else
         int d = (int)NSProcessInfo.processInfo.activeProcessorCount - 2; if (d > 8) d = 8; if (d < 1) d = 1;
+        if (totk_tier() == 1 && d > 2) d = 2;   // 8 GB Macs swap when compiling with one thread per core
 #endif
         n = e && *e ? atoi(e) : d; if (n < 1) n = 1; if (n > 32) n = 32;
     });
