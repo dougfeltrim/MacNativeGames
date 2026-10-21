@@ -1356,7 +1356,14 @@ def step_warm_metal(tree, out, logs):
     t0 = time.time()
     try:
         clone(tree / 'build/warm-metal-cache', tool)
-        run([tool, seed], logs / 'warm-metal-cache.log')
+        tool_args = [tool, seed]
+        ram = phys_ram_bytes()
+        if ram is not None and ram < 16 << 30:
+            tool_args.append('2')   # 8 GB Macs swap with one compiler per core (about 25 minutes on an 8 GB M1)
+            say("   8 GB Mac: two compiler threads so this step does not swap")
+            say("   tip: an Xcode with the Metal toolchain (xcodebuild -downloadComponent MetalToolchain) compiles the "
+                "startup shaders into the app instead (step_shader_libs), and this step is skipped entirely")
+        run(tool_args, logs / 'warm-metal-cache.log')
         run([tool, seed, '--verify', '64'], logs / 'warm-metal-cache-verify.log', quiet=False)
     except (BuildError, OSError) as e:
         say(f'   not done, the first start compiles them instead: {str(e).splitlines()[0]}')
