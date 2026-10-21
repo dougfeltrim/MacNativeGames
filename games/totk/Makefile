@@ -218,6 +218,15 @@ probe-memory: runtime
 	build/totk-native rewritten/v0 probe-memory > analysis/native-memory-probe.json
 	@cat analysis/native-memory-probe.json
 
+.PHONY: probe-tier
+# TOTK_TIER: which Macs get the tier-1 preset (Apple7 GPU family or less than 12 GB RAM); the probe checks the
+# totk_tier_default contract too (explicit env wins on every tier; the tier-1 defaults come back only on tier 1).
+build/tier-probe: scripts/tier_probe.c third_party/d2r_gfx/gfx/nvn/totk_tier.m third_party/d2r_gfx/gfx/nvn/include/totk_tier.h
+	xcrun clang -std=gnu11 -O1 -g -Wall -Wextra -Werror -fobjc-arc -Ithird_party/d2r_gfx/gfx/nvn/include scripts/tier_probe.c third_party/d2r_gfx/gfx/nvn/totk_tier.m -framework Metal -framework Foundation -o "$@"
+probe-tier: build/tier-probe
+	build/tier-probe > analysis/native-tier-probe.json
+	@cat analysis/native-tier-probe.json
+
 .PHONY: probe-input
 build/input-probe: scripts/input_probe.c runtime/input.c runtime/hid_feedback.c runtime/motion_fusion.c runtime/autoload.c runtime/autoload.h runtime/runtime.h
 	xcrun clang -std=c11 -O1 -Wall -Wextra -Werror scripts/input_probe.c runtime/input.c runtime/hid_feedback.c runtime/motion_fusion.c runtime/autoload.c -o "$@"
