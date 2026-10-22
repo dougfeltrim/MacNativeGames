@@ -1379,6 +1379,12 @@ def warm_order(seed, build):
     return ordered
 
 
+# How many libraries the warm-up may put into Metal's store (0: all). The store holds about 1.08 GB and evicts on its
+# own, so a run that needs more would push out the entries it made; the most important ones are compiled first
+# (warm_order), and anything past this stays for the game's own background warm-up.
+WARM_BUDGET = 0
+
+
 def step_warm_metal(tree, out, logs):
     """Compile the app's startup shaders once into this Mac's Metal cache (2026-10-18). The game compiles each of them from
     source when it first meets it, and Metal keeps the result keyed by the source text, the compile options and the length
@@ -1404,7 +1410,6 @@ def step_warm_metal(tree, out, logs):
         say(f"4/4 app: {who} has Metal's shader cache open, so the startup shaders are compiled on the first start instead "
             '(what this build compiled now would be lost when that program quits)')
         return
-    say("4/4 app: compiling the startup shaders for this Mac's GPU once (about 2 minutes on an M4, about 25 on an 8 GB M1; minutes saved on the first start)")
     t0 = time.time()
     try:
         clone(tree / 'build/warm-metal-cache', tool)
@@ -1412,14 +1417,34 @@ def step_warm_metal(tree, out, logs):
         order_file = logs / 'warm-order.txt'
         order_file.parent.mkdir(parents=True, exist_ok=True)
         order_file.write_text('\n'.join(str(src) for src in order) + '\n')
+        # The title list comes first in that order and is all the first frame waits for: when it is already there, a
+        # rebuild has nothing worth doing (the game's own lookup takes 0.03-0.5 ms each). A cold store compiles these 64
+        # here (the largest of the title group; minutes were measured on an 8 GB M1 right after macOS scanned the app).
+        say('   checking whether the title shaders are in Metal\'s cache already')
+        run([tool, seed, '--verify', '64', '--list', order_file], logs / 'warm-metal-cache-preverify.log', quiet=False)
+        pre = last_json(logs / 'warm-metal-cache-preverify.log')
+        if pre and pre.get('sampled') and pre['hits'] * 100 >= pre['sampled'] * 97:
+            say(f"   the title shaders are already in Metal's cache ({pre['hits']} of {pre['sampled']} found in "
+                f"{pre['median_ms']:.2f} ms), so nothing is compiled")
+            return
+        say("4/4 app: compiling the startup shaders for this Mac's GPU once (about 2 minutes on an M4, about half an hour "
+            "on an 8 GB M1 at six threads; minutes saved on the first start)")
         tool_args = [tool, seed]
+        wanted = (os.environ.get('TOTK_BUILD_WARM_THREADS') or '').strip()
         ram = phys_ram_bytes()
-        if ram is not None and ram < 16 << 30:
-            tool_args.append('2')   # 8 GB Macs swap with one compiler per core (about 25 minutes on an 8 GB M1)
-            say("   8 GB Mac: two compiler threads so this step does not swap")
+        if wanted.isdigit() and int(wanted) >= 1:
+            tool_args.append(str(int(wanted)))   # an explicit count always wins, whatever the RAM is
+            say(f'   {int(wanted)} compiler threads (TOTK_BUILD_WARM_THREADS)')
+        elif ram is not None and ram < 16 << 30:
+            # Measured on an 8 GB M1 (2026-10-21, cold store, 1,500 shaders each): 2 threads 5.8 a second, 4: 8.2,
+            # 6: 9.9 with no swap growth, 8: 8.4 and 54 MB more swap. Six is the best this Mac has, not its core count.
+            tool_args.append(str(min(6, os.cpu_count() or 6)))
+            say(f"   8 GB Mac: {tool_args[-1]} compiler threads (six was the fastest here; eight swapped and was slower)")
             say("   tip: an Xcode with the Metal toolchain (xcodebuild -downloadComponent MetalToolchain) compiles the "
                 "startup shaders into the app instead (step_shader_libs), and this step is skipped entirely")
-        run([*tool_args, '--list', order_file], logs / 'warm-metal-cache.log')
+        budget = (os.environ.get('TOTK_BUILD_WARM_BUDGET') or '').strip()
+        budget = str(int(budget)) if budget.isdigit() else str(WARM_BUDGET)
+        run(['caffeinate', '-i', *tool_args, '--list', order_file, '--budget', budget], logs / 'warm-metal-cache.log')
         run([tool, seed, '--verify', '64'], logs / 'warm-metal-cache-verify.log', quiet=False)
     except (BuildError, OSError) as e:
         say(f'   not done, the first start compiles them instead: {str(e).splitlines()[0]}')
@@ -1434,8 +1459,14 @@ def step_warm_metal(tree, out, logs):
         say(f"   {done['failed']} shaders do not compile on this Mac (the game reports them in its log too); see {logs / 'warm-metal-cache.log'}")
     if done.get('duplicates'):
         say(f"   {done['duplicates']} files are byte-identical to another one and were not compiled twice")
+    if done.get('budget_stopped'):
+        say(f"   budget of {budget}: {done['cold']} compiled, {done['remaining']} left for the game to compile in its own "
+            'background warm-up (TOTK_BUILD_WARM_BUDGET=0 compiles them all)')
     if sample['sampled'] and sample['hits'] * 10 >= sample['sampled'] * 9:
-        say(f"   {done['compiled']} shaders compiled in {time.time() - t0:.0f} s; a new program finds them in Metal's cache "
+        counts = f"{done['compiled']} shaders"
+        if done.get('cold') is not None and done.get('hits') is not None:
+            counts += f" ({done['cold']} compiled, {done['hits']} already in the store)"
+        say(f"   {counts} checked in {time.time() - t0:.0f} s; a new program finds them in Metal's cache "
             f"({sample['hits']} of {sample['sampled']} sampled, median {sample['median_ms']:.1f} ms). Moving the app makes them "
             f"cold again.")
     else:
