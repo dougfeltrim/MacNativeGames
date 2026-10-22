@@ -1327,6 +1327,58 @@ def phys_ram_bytes():
         return None
 
 
+def pso_names(listing):
+    """The translated file names a pso list names, in file order: an S or C row names the file <key>-<answers>_b, an R
+    row packs the two files of a pipeline (hex, NUL-separated)."""
+    names = []
+    for line in listing.read_text(errors='replace').splitlines():
+        if line.startswith('#') or '\t' not in line:
+            continue
+        kind, rest = line.split('\t', 1)
+        if kind in ('S', 'C'):
+            names.append(rest.split('\t')[0])
+        elif kind == 'R':
+            try:
+                names += [part.decode('ascii') for part in bytes.fromhex(rest.split('\t')[0]).split(b'\0')
+                          if part.endswith(b'_b')]
+            except (ValueError, UnicodeDecodeError):
+                pass
+    return names
+
+
+def pso_keys(listing):
+    """The shader keys those names belong to. Their answers hash belongs to the chain that wrote the list, which may
+    differ from the seed's: the game compiles a variant from its text, so the key is what finds the seed's file."""
+    keys = (name.split('-')[0] for name in pso_names(listing))
+    return [key for key in keys if len(key) == 64]
+
+
+def warm_order(seed, build):
+    """The seed's shader files in the order the game's warm-up meets them (nvn_mtl.m warm_start): the title list first
+    (the first frame waits only for that one), then the game's manifest, the seed's own manifest, and anything else.
+    The largest file comes first inside each group, so a 1 MB shader does not become a long tail of one; the game
+    compiles a variant from its text, whatever the answers hash in its name, so a key's files are all taken."""
+    by_key = {}
+    for src in sorted(seed.glob('*_b.metal')):
+        by_key.setdefault(src.name.split('-')[0], []).append(src)
+    ordered, seen = [], set()
+
+    def take(files):
+        for src in sorted(files, key=lambda p: (-p.stat().st_size, p.name)):
+            if src not in seen:
+                seen.add(src)
+                ordered.append(src)
+
+    for listing in (build/'pso_title.tsv', build/'pso_manifest.tsv'):
+        if listing.is_file():
+            take([src for key in pso_keys(listing) for src in by_key.get(key, [])])
+    manifest = seed/'pso_manifest.tsv'
+    if manifest.is_file():   # every file the seed holds, by its exact name
+        take(seed/f'{name}.metal' for name in pso_names(manifest) if (seed/f'{name}.metal').is_file())
+    take(seed.glob('*_b.metal'))
+    return ordered
+
+
 def step_warm_metal(tree, out, logs):
     """Compile the app's startup shaders once into this Mac's Metal cache (2026-10-18). The game compiles each of them from
     source when it first meets it, and Metal keeps the result keyed by the source text, the compile options and the length
@@ -1356,6 +1408,10 @@ def step_warm_metal(tree, out, logs):
     t0 = time.time()
     try:
         clone(tree / 'build/warm-metal-cache', tool)
+        order = warm_order(seed, build)
+        order_file = logs / 'warm-order.txt'
+        order_file.parent.mkdir(parents=True, exist_ok=True)
+        order_file.write_text('\n'.join(str(src) for src in order) + '\n')
         tool_args = [tool, seed]
         ram = phys_ram_bytes()
         if ram is not None and ram < 16 << 30:
@@ -1363,7 +1419,7 @@ def step_warm_metal(tree, out, logs):
             say("   8 GB Mac: two compiler threads so this step does not swap")
             say("   tip: an Xcode with the Metal toolchain (xcodebuild -downloadComponent MetalToolchain) compiles the "
                 "startup shaders into the app instead (step_shader_libs), and this step is skipped entirely")
-        run(tool_args, logs / 'warm-metal-cache.log')
+        run([*tool_args, '--list', order_file], logs / 'warm-metal-cache.log')
         run([tool, seed, '--verify', '64'], logs / 'warm-metal-cache-verify.log', quiet=False)
     except (BuildError, OSError) as e:
         say(f'   not done, the first start compiles them instead: {str(e).splitlines()[0]}')
@@ -1376,6 +1432,8 @@ def step_warm_metal(tree, out, logs):
         return
     if done.get('failed'):
         say(f"   {done['failed']} shaders do not compile on this Mac (the game reports them in its log too); see {logs / 'warm-metal-cache.log'}")
+    if done.get('duplicates'):
+        say(f"   {done['duplicates']} files are byte-identical to another one and were not compiled twice")
     if sample['sampled'] and sample['hits'] * 10 >= sample['sampled'] * 9:
         say(f"   {done['compiled']} shaders compiled in {time.time() - t0:.0f} s; a new program finds them in Metal's cache "
             f"({sample['hits']} of {sample['sampled']} sampled, median {sample['median_ms']:.1f} ms). Moving the app makes them "
