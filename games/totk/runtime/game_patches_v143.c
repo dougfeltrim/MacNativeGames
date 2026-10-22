@@ -3,6 +3,7 @@
 #include "aspect_patch.h"
 #include "game_patches.h"
 #include "game_version.h"
+#include "totk_tier.h"
 #include "world_survey.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -430,7 +431,7 @@ static void render_res_publish(unsigned canvas_w){
     fprintf(stderr,"[totk] 1.4.3 render resolution: %ux%u on a %u-wide canvas (game size %.0fx%.0f, scaled by %.4f)\n",render_w,render_h,canvas_w,v[0],v[1],k);
 }
 static int render_res(unsigned *w,unsigned *h){
-    const char *e=getenv("TOTK_RENDER_RES");
+    const char *e=totk_tier_default(getenv("TOTK_RENDER_RES"),"1280x720",NULL);   // tier 1 preset: 720p scene, MetalFX upscales
     if(!e||!*e||!strcmp(e,"0"))return 0;
     char rest;
     if(sscanf(e,"%ux%u%c",w,h,&rest)!=2||*w<64||*h<64||*w>4096||*h>4096)runtime_fail("TOTK_RENDER_RES must be <width>x<height>");

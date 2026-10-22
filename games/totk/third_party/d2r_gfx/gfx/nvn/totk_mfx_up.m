@@ -19,6 +19,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "totk_mfx_up.h"
+#include "totk_tier.h"
 
 #define ULOG(...) do { fprintf(stderr, "[dm] [nvn-mtl] [mfx-up] " __VA_ARGS__); fputc('\n', stderr); } while (0)
 
@@ -51,8 +52,8 @@ static int g_unavailable;                                        // no MetalFX h
 int mfxup_enabled(void) {
     int v = atomic_load_explicit(&g_on, memory_order_relaxed);
     if (v < 0) {
-        const char *e = getenv("TOTK_MFX_UPSCALE");
-        v = e ? strcmp(e, "0") != 0 : 0;
+        const char *d = totk_tier_default(getenv("TOTK_MFX_UPSCALE"), "1", "0");   // tier 1 preset: MetalFX on by default
+        v = strcmp(d, "0") != 0;
         atomic_store(&g_on, v);
         ULOG("MetalFX spatial upscaling (TOTK_MFX_UPSCALE): %s", v ? "on" : "off");
     }

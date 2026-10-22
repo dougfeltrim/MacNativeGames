@@ -28,9 +28,10 @@ class StepWarmMetalTests(unittest.TestCase):
     def tearDown(self):
         self.folder.cleanup()
 
-    def step(self, game_running=False, reports=None, fail=False, users=(), users_after=()):
+    def step(self, game_running=False, reports=None, fail=False, users=(), users_after=(), ram=32 << 30):
         """Run the step with pgrep, lsof and the tool replaced; reports: {log name: JSON object} the tool would print;
-        users / users_after: the programs that have Metal's cache open before compiling / when the check failed."""
+        users / users_after: the programs that have Metal's cache open before compiling / when the check failed;
+        ram: this Mac's physical RAM for the thread choice (the tests simulate a 32 GB machine unless told otherwise)."""
         calls = []
         cache_users = iter([list(users), list(users_after)])
 
@@ -49,6 +50,7 @@ class StepWarmMetalTests(unittest.TestCase):
         with mock.patch.object(build_app.subprocess, 'run', side_effect=system), mock.patch.object(build_app, 'run', side_effect=run), \
              mock.patch.object(build_app, 'clone', side_effect=lambda src, dst: shutil.copyfile(src, dst)), \
              mock.patch.object(build_app, 'say', side_effect=self.said.append), \
+             mock.patch.object(build_app, 'phys_ram_bytes', return_value=ram), \
              mock.patch.object(build_app, 'metal_cache_users', side_effect=lambda: next(cache_users)):
             build_app.step_warm_metal(self.tree, self.out, self.logs)
         return calls
@@ -70,6 +72,15 @@ class StepWarmMetalTests(unittest.TestCase):
         self.assertEqual(calls, [[str(self.app_tool), seed], [str(self.app_tool), seed, '--verify', '64']])
         self.assertFalse(self.app_tool.exists(), 'the tool must not stay inside the signed app')
         self.assertIn("finds them in Metal's cache (64 of 64", self.said[-1])
+
+    def test_low_ram_uses_two_threads_and_points_at_the_toolchain(self):
+        calls = self.step(ram=8 << 30, reports={
+            'warm-metal-cache.log': {'files': 8290, 'compiled': 8290, 'skipped': 0, 'failed': 0, 'threads': 2, 'seconds': 700.0},
+            'warm-metal-cache-verify.log': {'sampled': 64, 'hits': 64, 'median_ms': 0.3, 'max_ms': 0.9}})
+        seed = str(self.app_build / 'shader-seed')
+        self.assertEqual(calls, [[str(self.app_tool), seed, '2'], [str(self.app_tool), seed, '--verify', '64']])
+        self.assertTrue(any('two compiler threads' in s for s in self.said))
+        self.assertTrue(any('MetalToolchain' in s for s in self.said))
 
     def test_says_so_when_metal_did_not_keep_them(self):
         self.step(reports={
