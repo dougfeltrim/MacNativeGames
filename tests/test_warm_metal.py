@@ -5,6 +5,7 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+import uuid
 from unittest import mock
 
 import build_app
@@ -69,7 +70,8 @@ class StepWarmMetalTests(unittest.TestCase):
             'warm-metal-cache.log': {'files': 8290, 'compiled': 8290, 'skipped': 0, 'failed': 0, 'threads': 8, 'seconds': 170.0},
             'warm-metal-cache-verify.log': {'sampled': 64, 'hits': 64, 'median_ms': 0.3, 'max_ms': 0.9}})
         seed = str(self.app_build / 'shader-seed')
-        self.assertEqual(calls, [[str(self.app_tool), seed], [str(self.app_tool), seed, '--verify', '64']])
+        order = str(self.logs / 'warm-order.txt')
+        self.assertEqual(calls, [[str(self.app_tool), seed, '--list', order], [str(self.app_tool), seed, '--verify', '64']])
         self.assertFalse(self.app_tool.exists(), 'the tool must not stay inside the signed app')
         self.assertIn("finds them in Metal's cache (64 of 64", self.said[-1])
 
@@ -78,9 +80,16 @@ class StepWarmMetalTests(unittest.TestCase):
             'warm-metal-cache.log': {'files': 8290, 'compiled': 8290, 'skipped': 0, 'failed': 0, 'threads': 2, 'seconds': 700.0},
             'warm-metal-cache-verify.log': {'sampled': 64, 'hits': 64, 'median_ms': 0.3, 'max_ms': 0.9}})
         seed = str(self.app_build / 'shader-seed')
-        self.assertEqual(calls, [[str(self.app_tool), seed, '2'], [str(self.app_tool), seed, '--verify', '64']])
+        order = str(self.logs / 'warm-order.txt')
+        self.assertEqual(calls, [[str(self.app_tool), seed, '2', '--list', order], [str(self.app_tool), seed, '--verify', '64']])
         self.assertTrue(any('two compiler threads' in s for s in self.said))
         self.assertTrue(any('MetalToolchain' in s for s in self.said))
+
+    def test_says_how_many_duplicates_were_not_compiled_twice(self):
+        self.step(reports={
+            'warm-metal-cache.log': {'files': 8290, 'compiled': 6219, 'duplicates': 2071, 'skipped': 0, 'failed': 0},
+            'warm-metal-cache-verify.log': {'sampled': 64, 'hits': 64, 'median_ms': 0.3, 'max_ms': 0.9}})
+        self.assertTrue(any('2071 files are byte-identical' in s for s in self.said))
 
     def test_says_so_when_metal_did_not_keep_them(self):
         self.step(reports={
@@ -112,6 +121,49 @@ class StepWarmMetalTests(unittest.TestCase):
         self.assertEqual(build_app.last_json(log), {'compiled': 2})
         log.write_text('nothing\n')
         self.assertIsNone(build_app.last_json(log))
+
+
+
+class WarmOrderTests(unittest.TestCase):
+    """warm_order: the title list first, then the game's manifest, then the seed's, the largest file first in each
+    group; keys, not answers hashes, find the seed's files."""
+
+    KEY_A, KEY_B, KEY_C, KEY_D = ('a' * 64, 'b' * 64, 'c' * 64, 'd' * 64)
+
+    def setUp(self):
+        self.folder = tempfile.TemporaryDirectory()
+        root = Path(self.folder.name)
+        self.seed, self.build = root / 'seed', root / 'build'
+        self.seed.mkdir()
+        self.build.mkdir()
+
+    def tearDown(self):
+        self.folder.cleanup()
+
+    def source(self, key, answers, size):
+        path = self.seed / f'{key}-{answers}_b.metal'
+        path.write_text('x' * size)
+        return path
+
+    def test_groups_and_size_within_each(self):
+        a_small = self.source(self.KEY_A, '1111', 10)
+        b_small = self.source(self.KEY_B, '2222', 20)
+        b_big = self.source(self.KEY_B, '3333', 40)
+        c = self.source(self.KEY_C, '4444', 5)
+        d = self.source(self.KEY_D, '5555', 7)
+        packed = bytes(f'{self.KEY_B}-8888_b', 'ascii') + b'\0' + bytes(f'{self.KEY_A}-9999_b', 'ascii')
+        (self.build / 'pso_title.tsv').write_text(
+            f'# title\nS\t{self.KEY_A}-7777_b\t0\nR\t{packed.hex()}\t0\nS\tnot-a-shader\t0\nbroken\n')
+        (self.build / 'pso_manifest.tsv').write_text(f'S\t{self.KEY_B}-6666_b\t0\n')
+        (self.seed / 'pso_manifest.tsv').write_text(f'C\t{c.name[:-len(".metal")]}\nS\tmissing-0000_b\n')
+        self.assertEqual(build_app.warm_order(self.seed, self.build), [b_big, b_small, a_small, c, d],
+                         'title files first (the R row names a title key too), then the game manifest, then the seed '
+                         'manifest, then the rest; big files before small ones inside a group')
+
+    def test_no_lists_still_orders_every_file(self):
+        one = self.source(self.KEY_A, '1111', 3)
+        two = self.source(self.KEY_B, '2222', 9)
+        self.assertEqual(build_app.warm_order(self.seed, self.build), [two, one])
 
 
 
@@ -160,31 +212,60 @@ class MetalCacheUsersTests(unittest.TestCase):
 
 @unittest.skipUnless(shutil.which('xcrun'), 'needs the Xcode command line tools')
 class WarmMetalToolTests(unittest.TestCase):
-    """The real tool on three small sources: one compiles, one the game skips (double), one does not compile."""
+    """The real tool on small sources: one compiles, one the game skips (double), one does not compile."""
+
+    def build(self, root):
+        tool = root / 'warm-metal-cache'
+        built = subprocess.run(['xcrun', 'clang', '-fobjc-arc', '-O2', '-Wall', '-Wextra', '-Werror', str(TOOL_SOURCE),
+                                '-framework', 'Metal', '-framework', 'Foundation', '-o', str(tool)], capture_output=True, text=True)
+        self.assertEqual(built.returncode, 0, built.stderr)
+        return tool
+
+    def run_tool(self, cmd):
+        r = subprocess.run([str(part) for part in cmd], capture_output=True, text=True)
+        if r.returncode == 2 and 'no Metal device' in r.stderr:
+            self.skipTest('no Metal device')
+        self.assertEqual(r.returncode, 0, r.stderr)
+        return json.loads(r.stdout.strip().splitlines()[-1]), r.stderr
 
     def test_counts(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
-            tool = root / 'warm-metal-cache'
-            built = subprocess.run(['xcrun', 'clang', '-fobjc-arc', '-O2', '-Wall', '-Wextra', '-Werror', str(TOOL_SOURCE),
-                                    '-framework', 'Metal', '-framework', 'Foundation', '-o', str(tool)], capture_output=True, text=True)
-            self.assertEqual(built.returncode, 0, built.stderr)
+            tool = self.build(root)
             seed = root / 'seed'
             seed.mkdir()
-            (seed / 'a_b.metal').write_text('#include <metal_stdlib>\nusing namespace metal;\n'
-                                            'kernel void mng_test_warm(device float *a [[buffer(0)]], uint i [[thread_position_in_grid]]) { a[i] = a[i] * 2.0f; }\n')
+            # a unique comment makes the text new here, so the run compiles it whatever the Mac's store holds
+            body = ('#include <metal_stdlib>\nusing namespace metal;\n'
+                    'kernel void mng_test_warm(device float *a [[buffer(0)]], uint i [[thread_position_in_grid]]) { a[i] = a[i] * 2.0f; }\n'
+                    f'// {uuid.uuid4().hex}\n')
+            (seed / 'a_b.metal').write_text(body)
+            (seed / 'd_b.metal').write_text(body)   # byte-identical: compiled once
             (seed / 'b_b.metal').write_text('kernel void k(device double *a [[buffer(0)]]) {}\n')
             (seed / 'c_b.metal').write_text('this is not metal\n')
             (seed / 'a_b.json').write_text('{}')   # not a source: ignored
-            r = subprocess.run([str(tool), str(seed), '2'], capture_output=True, text=True)
-            if r.returncode == 2 and 'no Metal device' in r.stderr:
-                self.skipTest('no Metal device')
-            self.assertEqual(r.returncode, 0, r.stderr)
-            report = json.loads(r.stdout.strip().splitlines()[-1])
-            self.assertEqual((report['files'], report['compiled'], report['skipped'], report['failed']), (3, 1, 1, 1))
-            v = subprocess.run([str(tool), str(seed), '--verify', '3'], capture_output=True, text=True)
-            self.assertEqual(v.returncode, 0, v.stderr)
-            self.assertEqual(json.loads(v.stdout.strip().splitlines()[-1])['sampled'], 1)
+            report, _ = self.run_tool([tool, seed, '2'])
+            self.assertEqual((report['files'], report['unique'], report['duplicates'], report['compiled'],
+                              report['skipped'], report['failed']), (4, 3, 1, 1, 1, 1))
+            v, _ = self.run_tool([tool, seed, '--verify', '3'])
+            self.assertEqual(v['sampled'], 1)
+
+    def test_list_limits_the_compile_to_the_listed_files(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            tool = self.build(root)
+            seed = root / 'seed'
+            seed.mkdir()
+            paths = []
+            for n in ('one', 'two', 'three'):
+                p = seed / f'{n}_b.metal'
+                p.write_text('#include <metal_stdlib>\nusing namespace metal;\n'
+                             f'kernel void mng_test_{n}(device float *a [[buffer(0)]]) {{ a[0] = 1.0f; }}\n// {uuid.uuid4().hex}\n')
+                paths.append(p)
+            listing = root / 'order.txt'
+            listing.write_text('# comment\n\n' + '\n'.join(str(p) for p in paths[:2]) + '\n')
+            report, _ = self.run_tool([tool, seed, '1', '--list', listing])
+            self.assertEqual((report['files'], report['unique'], report['compiled'], report['skipped'], report['failed']),
+                             (2, 2, 2, 0, 0))
 
 
 if __name__ == '__main__':
