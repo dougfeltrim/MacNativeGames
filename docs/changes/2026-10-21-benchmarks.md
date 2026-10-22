@@ -21,8 +21,9 @@ still, and produce numbers that can be compared across runs.
    [bench] {"frame_ms":[...],"gpu_ms":[...],"present_ms":[...],"tier":1}
    ```
 
-   The collection reuses the existing timing windows (`g_tw`, `g_tn`, `g_pres_iv`): when a window is about to be
-   overwritten, its samples are copied first. `n` must be a multiple of the 300-frame window (a shorter request is
+   The collection reuses the existing timing windows (`g_tw`, `g_tn`, `g_pres_iv`). `tsummary()` clears the rings
+   after every window, so at each summary the whole ring is the window since the previous one; `bench_collect()`
+   copies it before the clear. `n` must be a multiple of the 300-frame window (a shorter request is
    rejected with a log line rather than silently rounded) and is capped at 8,192 frames. A malformed value means the
    benchmark stays off.
 2. **`TOTK_BENCH_EXIT=1`.** After the flush, the game exits with `_exit(0)`. A scripted run therefore ends at a known
@@ -43,8 +44,9 @@ counting use the game's formulas, the render size and MetalFX markers are read f
 
 The game-side collection has no unit test (it lives in the renderer); it was exercised by the M1 runs whose numbers are
 recorded in the benchmark documentation added by the later increments of this series. Those runs were made on the
-original base `4fdda41`; the collection code is unchanged, but a run on `30a1b93` is needed to put numbers on the new
-base.
+original base `4fdda41`. A first version of `bench_collect()` advanced monotonic indices while `tsummary()` cleared the
+rings, so a long request kept only one window; `538276f` copies the current ring every window and was verified with
+900/900/900 samples. The new-base runs are in [Re-measured on the new base](2026-10-21-remeasure-30a1b93.md).
 
 ## How to use it
 

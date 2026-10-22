@@ -35,8 +35,10 @@ Two existing documents are brought up to date:
 | First launch | first frame 32.9 s; 22,643 shaders + 182 pipelines warmed in 36.3 s with 2 threads; 22,801 runtime compile calls, all hits |
 
 All numbers above were measured on the original series base `4fdda41`. The upstream shader list grew before the series
-was restacked onto `30a1b93`, so the seed on the new base is larger and every absolute count needs a fresh run; the
-mechanisms and the comparison against the old two-thread default are unchanged.
+was restacked onto `30a1b93`, so the seed on the new base is larger and every absolute count needed a fresh run; it is
+in [Re-measured on the new base](2026-10-21-remeasure-30a1b93.md) (23,353 files, 21,134 unique; 4-minute build with a
+warm store; first frame 3.1–8.1 s). The mechanisms and the comparison against the old two-thread default are
+unchanged.
 
 ## Why these are trustworthy
 
