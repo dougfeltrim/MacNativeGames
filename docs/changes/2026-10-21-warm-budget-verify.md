@@ -44,7 +44,8 @@ All of it is in `build_app.py` and `games/totk/tools/warm_metal_cache.m`; the ga
 
 These numbers were measured on the original series base `4fdda41`. The upstream shader list has grown since, so a seed
 prepared on `30a1b93` holds more files; the thread ranking, the eviction behaviour and the hot-cache skip are properties
-of the tool, but the absolute times and counts need a fresh measurement on the new base.
+of the tool. The new-base measurement is in [Re-measured on the new base](2026-10-21-remeasure-30a1b93.md): 23,353
+variants, hot pre-check 64/64, first-launch top-up 135.8 s and 17–23 s afterwards.
 
 ### Thread scan
 

@@ -70,8 +70,8 @@ From the 1.4.3 seed used by the build:
 
 These counts are from the seed on the original series base `4fdda41`. The upstream shader list has grown since (more
 variants in `games/totk/assets/shader_list.tsv`), so a seed prepared on `30a1b93` holds more files. The mechanism is the
-same (text-identical files are skipped, and the game's lists set the order), but the absolute numbers need a fresh
-measurement on the new base.
+same (text-identical files are skipped, and the game's lists set the order); the new-base measurement is in
+[Re-measured on the new base](2026-10-21-remeasure-30a1b93.md) (23,353 files, 21,134 unique, 2,219 duplicates).
 
 Across the full measured warm-up (recorded in the next increment), those unique files split into 17,423 cold compiles and
 3,149 store hits. The average cold compile in that run cost about 0.58 s of worker time, so skipping the 2,071 duplicates

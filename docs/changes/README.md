@@ -5,7 +5,8 @@ packaging-time shader warm-up from about an hour to about half an hour, in revie
 branch stacked on the previous one; they are meant to be reviewed and merged in the order below.
 
 The series starts from `origin/main` at `30a1b93` (2026-10-21, after the fork synced upstream). Nothing here changes
-the iPhone path or the tier-2 (M2 and newer, 16 GB+) defaults.
+the iPhone path or the tier-2 (M2 and newer, 16 GB+) defaults. Increments 1–8 were measured on the original base
+`4fdda41`; increment 9 re-measures the build, first launch and frame times on `30a1b93`.
 
 | # | Date | Increment | Branch | What changes |
 |---|------|-----------|--------|--------------|
@@ -17,3 +18,4 @@ the iPhone path or the tier-2 (M2 and newer, 16 GB+) defaults.
 | 6 | 2026-10-21 | [Warm-up budget and verification](2026-10-21-warm-budget-verify.md) | `perf/warm-budget-verify` | Measured 6 threads, memory-pressure gate, `--budget`, 97% hot-cache skip, cold/hit counts |
 | 7 | 2026-10-21 | [Measured results](2026-10-21-warm-measurements.md) | `docs/warm-measurements` | `docs/m1-benchmarks.md` and the speed-up section of `docs/first-launch-shaders.md` |
 | 8 | 2026-10-21 | [Heat at 60 FPS](2026-10-21-heat-30fps.md) | `docs/heat-30fps` | Measured 60 vs 30 FPS GPU duty on the fanless M1; recommendation, default unchanged |
+| 9 | 2026-10-21 | [Re-measured on the new base](2026-10-21-remeasure-30a1b93.md) | `docs/remeasure-30a1b93` | `30a1b93` build, first launch and 60 vs 30 FPS numbers; benchmark window fix verified (271 tests) |

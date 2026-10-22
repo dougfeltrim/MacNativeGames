@@ -55,8 +55,9 @@ The full suite ran on this branch with the project virtualenv
 
 The M1 log above was captured on the original series base `4fdda41`. The tier-1 changes in this branch are the same
 ones that produced it, but the surrounding renderer now comes from `30a1b93`, which added pipeline and replay work; the
-log is evidence for the preset logic, not a byte-for-byte run of this exact tree. A fresh M1 run on the new base is the
-next measurement.
+log is evidence for the preset logic, not a byte-for-byte run of this exact tree. A fresh M1 run on the new base is in
+[Re-measured on the new base](2026-10-21-remeasure-30a1b93.md): tier 1 confirmed (720p + MetalFX), first frame
+3.1–8.1 s, 60 FPS measured.
 
 ## Trade-offs
 
