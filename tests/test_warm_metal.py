@@ -207,3 +207,17 @@ class MetalCompilerTests(unittest.TestCase):
         with mock.patch.object(build_app, 'developer_dirs', return_value=['/Library/Developer/CommandLineTools']), \
              mock.patch.object(build_app.subprocess, 'run', side_effect=self.fake_run('nowhere')):
             self.assertIsNone(build_app.metal_compiler())
+
+
+class PhysicalRamTests(unittest.TestCase):
+    """phys_ram_bytes: sysctl hw.memsize, None quando a leitura falha (o caller mantém o comportamento atual)."""
+
+    def test_reads_sysctl(self):
+        with mock.patch.object(build_app.subprocess, 'check_output', return_value='8589934592\n') as co:
+            self.assertEqual(build_app.phys_ram_bytes(), 8 << 30)
+        self.assertEqual(co.call_args.args[0], ['sysctl', '-n', 'hw.memsize'])
+
+    def test_none_when_sysctl_fails(self):
+        with mock.patch.object(build_app.subprocess, 'check_output',
+                               side_effect=subprocess.CalledProcessError(1, 'sysctl')):
+            self.assertIsNone(build_app.phys_ram_bytes())
