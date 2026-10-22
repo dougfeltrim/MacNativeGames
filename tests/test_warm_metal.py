@@ -29,12 +29,19 @@ class StepWarmMetalTests(unittest.TestCase):
     def tearDown(self):
         self.folder.cleanup()
 
-    def step(self, game_running=False, reports=None, fail=False, users=(), users_after=(), ram=32 << 30):
+    def step(self, game_running=False, reports=None, fail=False, users=(), users_after=(), ram=32 << 30, warm_threads=None,
+             warm_budget=None):
         """Run the step with pgrep, lsof and the tool replaced; reports: {log name: JSON object} the tool would print;
         users / users_after: the programs that have Metal's cache open before compiling / when the check failed;
-        ram: this Mac's physical RAM for the thread choice (the tests simulate a 32 GB machine unless told otherwise)."""
+        ram: this Mac's physical RAM for the thread choice (the tests simulate a 32 GB machine unless told otherwise);
+        warm_threads: the TOTK_BUILD_WARM_THREADS environment variable (an explicit count wins over the RAM default)."""
         calls = []
         cache_users = iter([list(users), list(users_after)])
+        env = {}
+        if warm_threads is not None:
+            env['TOTK_BUILD_WARM_THREADS'] = warm_threads
+        if warm_budget is not None:
+            env['TOTK_BUILD_WARM_BUDGET'] = warm_budget
 
         def run(cmd, log, **_kwargs):
             calls.append([str(c) for c in cmd])
@@ -52,6 +59,7 @@ class StepWarmMetalTests(unittest.TestCase):
              mock.patch.object(build_app, 'clone', side_effect=lambda src, dst: shutil.copyfile(src, dst)), \
              mock.patch.object(build_app, 'say', side_effect=self.said.append), \
              mock.patch.object(build_app, 'phys_ram_bytes', return_value=ram), \
+             mock.patch.dict(build_app.os.environ, env), \
              mock.patch.object(build_app, 'metal_cache_users', side_effect=lambda: next(cache_users)):
             build_app.step_warm_metal(self.tree, self.out, self.logs)
         return calls
@@ -67,27 +75,65 @@ class StepWarmMetalTests(unittest.TestCase):
 
     def test_runs_from_the_game_binarys_folder_and_leaves_nothing_there(self):
         calls = self.step(reports={
-            'warm-metal-cache.log': {'files': 8290, 'compiled': 8290, 'skipped': 0, 'failed': 0, 'threads': 8, 'seconds': 170.0},
+            'warm-metal-cache.log': {'files': 8290, 'compiled': 8290, 'cold': 8000, 'hits': 290, 'skipped': 0, 'failed': 0,
+                                     'threads': 8, 'seconds': 170.0},
             'warm-metal-cache-verify.log': {'sampled': 64, 'hits': 64, 'median_ms': 0.3, 'max_ms': 0.9}})
-        seed = str(self.app_build / 'shader-seed')
-        order = str(self.logs / 'warm-order.txt')
-        self.assertEqual(calls, [[str(self.app_tool), seed, '--list', order], [str(self.app_tool), seed, '--verify', '64']])
+        seed, order = str(self.app_build / 'shader-seed'), str(self.logs / 'warm-order.txt')
+        self.assertEqual(calls, [[str(self.app_tool), seed, '--verify', '64', '--list', order],
+                                 ['caffeinate', '-i', str(self.app_tool), seed, '--list', order, '--budget', '0'],
+                                 [str(self.app_tool), seed, '--verify', '64']])
         self.assertFalse(self.app_tool.exists(), 'the tool must not stay inside the signed app')
+        self.assertIn('8290 shaders (8000 compiled, 290 already in the store) checked', self.said[-1])
         self.assertIn("finds them in Metal's cache (64 of 64", self.said[-1])
 
-    def test_low_ram_uses_two_threads_and_points_at_the_toolchain(self):
+    def test_low_ram_uses_the_measured_thread_count_and_points_at_the_toolchain(self):
+        """Six threads measured fastest on an 8 GB M1 (eight was slower and swapped); a 4-core 8 GB Mac gets four."""
         calls = self.step(ram=8 << 30, reports={
-            'warm-metal-cache.log': {'files': 8290, 'compiled': 8290, 'skipped': 0, 'failed': 0, 'threads': 2, 'seconds': 700.0},
+            'warm-metal-cache.log': {'files': 8290, 'compiled': 8290, 'skipped': 0, 'failed': 0, 'threads': 6, 'seconds': 700.0},
             'warm-metal-cache-verify.log': {'sampled': 64, 'hits': 64, 'median_ms': 0.3, 'max_ms': 0.9}})
-        seed = str(self.app_build / 'shader-seed')
-        order = str(self.logs / 'warm-order.txt')
-        self.assertEqual(calls, [[str(self.app_tool), seed, '2', '--list', order], [str(self.app_tool), seed, '--verify', '64']])
-        self.assertTrue(any('two compiler threads' in s for s in self.said))
+        seed, order = str(self.app_build / 'shader-seed'), str(self.logs / 'warm-order.txt')
+        self.assertEqual(calls[1], ['caffeinate', '-i', str(self.app_tool), seed, '6', '--list', order, '--budget', '0'])
+        self.assertEqual(calls[2], [str(self.app_tool), seed, '--verify', '64'])
+        self.assertTrue(any('6 compiler threads' in s for s in self.said))
         self.assertTrue(any('MetalToolchain' in s for s in self.said))
+        with mock.patch.object(build_app.os, 'cpu_count', return_value=4):
+            calls = self.step(ram=8 << 30, reports={
+                'warm-metal-cache.log': {'files': 8290, 'compiled': 8290, 'skipped': 0, 'failed': 0, 'threads': 4, 'seconds': 700.0},
+                'warm-metal-cache-verify.log': {'sampled': 64, 'hits': 64, 'median_ms': 0.3, 'max_ms': 0.9}})
+        self.assertEqual(calls[1][4], '4')
+
+    def test_explicit_thread_count_wins_over_the_ram_default(self):
+        """TOTK_BUILD_WARM_THREADS is the escape hatch for a machine whose compiler threads do fit in its RAM."""
+        reports = {'warm-metal-cache.log': {'files': 8290, 'compiled': 8290, 'skipped': 0, 'failed': 0, 'threads': 8, 'seconds': 300.0},
+                   'warm-metal-cache-verify.log': {'sampled': 64, 'hits': 64, 'median_ms': 0.3, 'max_ms': 0.9}}
+        seed, order = str(self.app_build / 'shader-seed'), str(self.logs / 'warm-order.txt')
+        self.assertEqual(self.step(ram=8 << 30, warm_threads='8', reports=reports)[1],
+                         ['caffeinate', '-i', str(self.app_tool), seed, '8', '--list', order, '--budget', '0'])
+        self.assertTrue(any('8 compiler threads (TOTK_BUILD_WARM_THREADS)' in s for s in self.said))
+        self.assertFalse(any('two compiler threads' in s for s in self.said), 'the RAM default must not also speak')
+        self.assertEqual(self.step(ram=8 << 30, warm_threads='0', reports=reports)[1],
+                         ['caffeinate', '-i', str(self.app_tool), seed, '6', '--list', order, '--budget', '0'],
+                         'a zero or malformed count is not a thread count; the RAM default stands')
+
+    def test_the_title_shaders_already_in_the_cache_skip_the_compile(self):
+        """A rebuild in the same place is free: the game's own lookup is a fraction of a millisecond per shader."""
+        calls = self.step(reports={
+            'warm-metal-cache-preverify.log': {'sampled': 64, 'hits': 63, 'median_ms': 0.2, 'max_ms': 1.1}})
+        self.assertEqual(len(calls), 1, 'no compile after the probe found the title shaders')
+        self.assertIn('already in Metal\'s cache (63 of 64', self.said[-1])
+        self.assertFalse(self.app_tool.exists())
+
+    def test_budget_comes_from_the_environment(self):
+        reports = {'warm-metal-cache.log': {'files': 8290, 'compiled': 7000, 'cold': 7000, 'skipped': 0, 'failed': 0,
+                                            'duplicates': 0, 'budget_stopped': True, 'remaining': 1290},
+                   'warm-metal-cache-verify.log': {'sampled': 64, 'hits': 64, 'median_ms': 0.3, 'max_ms': 0.9}}
+        calls = self.step(warm_budget='12000', reports=reports)
+        self.assertEqual(calls[1][-2:], ['--budget', '12000'])
+        self.assertTrue(any('budget of 12000' in s for s in self.said))
 
     def test_says_how_many_duplicates_were_not_compiled_twice(self):
         self.step(reports={
-            'warm-metal-cache.log': {'files': 8290, 'compiled': 6219, 'duplicates': 2071, 'skipped': 0, 'failed': 0},
+            'warm-metal-cache.log': {'files': 8290, 'compiled': 6219, 'cold': 6219, 'duplicates': 2071, 'skipped': 0, 'failed': 0},
             'warm-metal-cache-verify.log': {'sampled': 64, 'hits': 64, 'median_ms': 0.3, 'max_ms': 0.9}})
         self.assertTrue(any('2071 files are byte-identical' in s for s in self.said))
 
@@ -166,7 +212,6 @@ class WarmOrderTests(unittest.TestCase):
         self.assertEqual(build_app.warm_order(self.seed, self.build), [two, one])
 
 
-
 class MetalCacheUsersTests(unittest.TestCase):
     """metal_cache_users: lsof on the shared store's files, parsed into 'name (pid)'."""
 
@@ -212,7 +257,7 @@ class MetalCacheUsersTests(unittest.TestCase):
 
 @unittest.skipUnless(shutil.which('xcrun'), 'needs the Xcode command line tools')
 class WarmMetalToolTests(unittest.TestCase):
-    """The real tool on small sources: one compiles, one the game skips (double), one does not compile."""
+    """The real tool on three small sources: one compiles, one the game skips (double), one does not compile."""
 
     def build(self, root):
         tool = root / 'warm-metal-cache'
@@ -249,23 +294,27 @@ class WarmMetalToolTests(unittest.TestCase):
             v, _ = self.run_tool([tool, seed, '--verify', '3'])
             self.assertEqual(v['sampled'], 1)
 
-    def test_list_limits_the_compile_to_the_listed_files(self):
+    def test_list_budget_and_stop(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
             tool = self.build(root)
             seed = root / 'seed'
             seed.mkdir()
-            paths = []
+            names = []
             for n in ('one', 'two', 'three'):
-                p = seed / f'{n}_b.metal'
-                p.write_text('#include <metal_stdlib>\nusing namespace metal;\n'
-                             f'kernel void mng_test_{n}(device float *a [[buffer(0)]]) {{ a[0] = 1.0f; }}\n// {uuid.uuid4().hex}\n')
-                paths.append(p)
+                (seed / f'{n}_b.metal').write_text(
+                    '#include <metal_stdlib>\nusing namespace metal;\n'
+                    f'kernel void mng_test_{n}(device float *a [[buffer(0)]]) {{ a[0] = 1.0f; }}\n// {uuid.uuid4().hex}\n')
+                names.append(str(seed / f'{n}_b.metal'))
             listing = root / 'order.txt'
-            listing.write_text('# comment\n\n' + '\n'.join(str(p) for p in paths[:2]) + '\n')
-            report, _ = self.run_tool([tool, seed, '1', '--list', listing])
-            self.assertEqual((report['files'], report['unique'], report['compiled'], report['skipped'], report['failed']),
-                             (2, 2, 2, 0, 0))
+            listing.write_text('# comment\n\n' + '\n'.join(names) + '\n')
+            report, _ = self.run_tool([tool, seed, '1', '--list', listing, '--budget', '1'])
+            self.assertEqual((report['files'], report['unique'], report['cold'], report['budget_stopped']),
+                             (3, 3, 1, True))
+            self.assertEqual(report['remaining'], 2, 'the one-thread worker stops before claiming another file')
+            v, _ = self.run_tool([tool, seed, '--verify', '2', '--list', listing])
+            self.assertEqual((v['sampled'], v['hits']), (2, 1), 'the first two files of the list: one was compiled, '
+                                                               'the other one is still cold')
 
 
 if __name__ == '__main__':
