@@ -16,3 +16,4 @@ the iPhone path or the tier-2 (M2 and newer, 16 GB+) defaults.
 | 5 | 2026-10-21 | [Warm-up order and dedup](2026-10-21-warm-order-dedup.md) | `perf/warm-order-dedup` | Title list first, largest-first groups, SHA-256 dedup of 2,071 identical files |
 | 6 | 2026-10-21 | [Warm-up budget and verification](2026-10-21-warm-budget-verify.md) | `perf/warm-budget-verify` | Measured 6 threads, memory-pressure gate, `--budget`, 97% hot-cache skip, cold/hit counts |
 | 7 | 2026-10-21 | [Measured results](2026-10-21-warm-measurements.md) | `docs/warm-measurements` | `docs/m1-benchmarks.md` and the speed-up section of `docs/first-launch-shaders.md` |
+| 8 | 2026-10-21 | [Heat at 60 FPS](2026-10-21-heat-30fps.md) | `docs/heat-30fps` | Measured 60 vs 30 FPS GPU duty on the fanless M1; recommendation, default unchanged |
