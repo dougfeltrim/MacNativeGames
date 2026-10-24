@@ -12,10 +12,13 @@ void mfxup_output_set(int on);
 void shortcut_test_output_init(void);
 void shortcut_test_output_size(unsigned w, unsigned h);
 
+static int keepalive_us=1000;
+int mtl_keepalive_target_us(void){return keepalive_us;}
 void dm_gfx_set_flag(const char *name, int value) {
     if (!strcmp(name, "mfx_interp")) mfx_set(value);
     else if (!strcmp(name, "mfx_output")) mfxup_output_set(value);
     else if (!strcmp(name, "mfx_upscale")) mfxup_set(value);
+    else if (!strcmp(name, "keepalive_us")) keepalive_us=value;
     else abort();
 }
 void shortcut_test_aspect_init(double view);
@@ -79,6 +82,9 @@ int main(int argc, const char **argv) { @autoreleasepool {
     expect(panel, @"Edge smoothing (MetalFX Temporal): off");
     press(23); tick(); expect(panel, @"Edge smoothing (MetalFX Temporal): on");
     press(23); tick(); expect(panel, @"Edge smoothing (MetalFX Temporal): off");
+    expect(panel, @"Eco (GPU keep-alive off): off");
+    press(28); tick(); expect(panel, @"Eco (GPU keep-alive off): on"); assert(keepalive_us == 0);
+    press(28); tick(); expect(panel, @"Eco (GPU keep-alive off): off"); assert(keepalive_us == 1000);
     /* Key 6: auto (what it takes the controller for) -> Xbox -> PlayStation -> Switch -> auto. */
     expect(panel, @"Controller type: auto (PlayStation) (current; press to cycle)");
     press(22); tick(); expect(panel, @"Controller type: Xbox (current");
@@ -103,6 +109,7 @@ int main(int argc, const char **argv) { @autoreleasepool {
     mfx_set(MFX_HALF); mfx_latch();
     setenv("TOTK_UI_LANG", "zh", 1); tick();
     expect(panel, @"补帧：当前 刷新率一半"); expect(panel, @"画质：当前 原生 2K");
+    expect(panel, @"节能（GPU 保活关闭）：关");
     expect(panel, @"6  手柄类型：当前 自动（未接手柄）（按键切换）");
     expect(panel, @"7  鼠标操作：当前 开（视角、按键，⌘Tab 释放指针）（按键切换）");
     fakePadDetected = GAMEPAD_TYPE_SWITCH; tick(); expect(panel, @"手柄类型：当前 自动（Switch）");

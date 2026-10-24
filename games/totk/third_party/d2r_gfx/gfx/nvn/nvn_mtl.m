@@ -484,6 +484,7 @@ static _Atomic uint64_t g_last_sub_ns;
 static _Atomic int g_ka_target_us = 1000;
 static _Atomic uint64_t g_ka_n, g_ka_us, g_ka_max_us;   // spin kernels completed, their summed / longest GPU time (us)
 void mtl_keepalive_stats(uint64_t v[3]) { v[0] = atomic_load(&g_ka_n); v[1] = atomic_load(&g_ka_us); v[2] = atomic_exchange(&g_ka_max_us, 0); }
+int mtl_keepalive_target_us(void) { return atomic_load(&g_ka_target_us); }   // key 6 eco reads and restores it (runtime/input.c)
 static void keepalive_start(void) {
     static int started; const char *e = getenv("TOTK_GPU_KEEPALIVE");
 #if TARGET_OS_IPHONE

@@ -19,3 +19,5 @@ the iPhone path or the tier-2 (M2 and newer, 16 GB+) defaults. Increments 1–8 
 | 7 | 2026-10-21 | [Measured results](2026-10-21-warm-measurements.md) | `docs/warm-measurements` | `docs/m1-benchmarks.md` and the speed-up section of `docs/first-launch-shaders.md` |
 | 8 | 2026-10-21 | [Heat at 60 FPS](2026-10-21-heat-30fps.md) | `docs/heat-30fps` | Measured 60 vs 30 FPS GPU duty on the fanless M1; recommendation, default unchanged |
 | 9 | 2026-10-21 | [Re-measured on the new base](2026-10-21-remeasure-30a1b93.md) | `docs/remeasure-30a1b93` | `30a1b93` build, first launch and 60 vs 30 FPS numbers; benchmark window fix verified (271 tests) |
+
+Standalone Eco validation: [2026-10-24 battery A/B](2026-10-24-eco-ab.md) — `codex/eco-only`, 1.2.1 on M1, measured whole-system power and pacing with explicit 30 FPS; preliminary result and collection limits recorded.

@@ -34,7 +34,30 @@ static void user_input(const char *what){
    MetalFX 2K -> native 2K -> off (runtime_output_mode_cycle). Key 6 (key code 22) cycles the controller type: auto -> Xbox ->
    PlayStation -> Switch (runtime_gamepad_type_cycle, gamepad.m). Key 7 (key code 26) turns mouse mode on / off
    (runtime_mouse_toggle, gamepad.m; the window holds the pointer: frontend.m). Held-key repeats do not cycle. */
-enum { KEY_INTERP_TOGGLE = 19, KEY_OUTPUT_MODE_CYCLE = 20, KEY_ASPECT_TOGGLE = 21, KEY_PAD_TYPE_CYCLE = 22, KEY_TAA_TOGGLE = 23, KEY_MOUSE_TOGGLE = 26 };   /* 21: key 4, 16:9 -> fit to the window -> 21:9 (aspect_patch.h); 22: key 6; 23: key 5, MetalFX temporal anti-aliasing (totk_taa.m) */
+enum { KEY_INTERP_TOGGLE = 19, KEY_OUTPUT_MODE_CYCLE = 20, KEY_ASPECT_TOGGLE = 21, KEY_PAD_TYPE_CYCLE = 22, KEY_TAA_TOGGLE = 23, KEY_MOUSE_TOGGLE = 26, KEY_ECO_TOGGLE = 28 };   /* 21: key 4, 16:9 -> fit to the window -> 21:9 (aspect_patch.h); 22: key 6; 23: key 5, MetalFX temporal anti-aliasing (totk_taa.m) */
+/* Key 8: eco. The GPU keep-alive fills the GPU's idle gaps to keep its clock up; at 30 FPS it is the largest GPU cost that
+   changes nothing on screen. Eco turns it off and back on, restoring the value that was active (TOTK_GPU_KEEPALIVE_US or
+   1000 µs); an explicit keepalive_us flag is the same switch. The keep-alive only started when the game renders. */
+static int eco_saved_us = 1000;
+int runtime_eco_enabled(void) {
+    extern int mtl_keepalive_target_us(void);
+    return mtl_keepalive_target_us() == 0;
+}
+static void runtime_eco_toggle(void) {
+    extern int mtl_keepalive_target_us(void);
+    extern void dm_gfx_set_flag(const char *name, int v);
+    int cur = mtl_keepalive_target_us();
+    if (cur) {
+        eco_saved_us = cur;
+        const char *fps60 = getenv("TOTK_FPS60");
+        if (!(fps60 && !strcmp(fps60, "0"))) fprintf(stderr, "[totk-eco] warning: 60 FPS is on; without the GPU keep-alive frames may miss (TOTK_FPS60=0)\n");
+        dm_gfx_set_flag("keepalive_us", 0);
+        fprintf(stderr, "[totk-eco] on: GPU keep-alive off (was %d us)\n", cur);
+    } else {
+        dm_gfx_set_flag("keepalive_us", eco_saved_us);
+        fprintf(stderr, "[totk-eco] off: GPU keep-alive back at %d us\n", eco_saved_us);
+    }
+}
 void runtime_input_key_synthetic(unsigned code,int down){if(code>=128)return;pthread_mutex_lock(&inputLock);int press=down&&!keys[code];if(down&&!keys[code])pending|=button(code);keys[code]=(unsigned char)!!down;pthread_mutex_unlock(&inputLock);
  if(press&&code==18){extern void runtime_shortcut_help_toggle(void);runtime_shortcut_help_toggle();}
  if(press&&code==KEY_INTERP_TOGGLE){extern void dm_gfx_set_flag(const char *name,int v);dm_gfx_set_flag("mfx_interp",-1);}
@@ -42,7 +65,8 @@ void runtime_input_key_synthetic(unsigned code,int down){if(code>=128)return;pth
  if(press&&code==KEY_ASPECT_TOGGLE)runtime_aspect_toggle();
  if(press&&code==KEY_TAA_TOGGLE){extern void taa_toggle(void);taa_toggle();}
  if(press&&code==KEY_PAD_TYPE_CYCLE)runtime_gamepad_type_cycle();
- if(press&&code==KEY_MOUSE_TOGGLE)runtime_mouse_toggle();}
+ if(press&&code==KEY_MOUSE_TOGGLE)runtime_mouse_toggle();
+ if(press&&code==KEY_ECO_TOGGLE)runtime_eco_toggle();}
 void runtime_input_key(unsigned code,int down){if(down&&code<128)user_input("keyboard");runtime_input_key_synthetic(code,down);}
 void runtime_input_clear(void){pthread_mutex_lock(&inputLock);memset(keys,0,sizeof(keys));pending=0;pthread_mutex_unlock(&inputLock);runtime_gamepad_clear();}
 static void initialize(void){pthread_mutex_lock(&inputLock);enabled=true;pthread_mutex_unlock(&inputLock);fprintf(stderr,"[totk] native keyboard controller initialized\n");}
