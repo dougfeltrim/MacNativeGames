@@ -11,7 +11,10 @@ uint64_t runtime_now_ns(void){return probe_clock_fixed?probe_now:(probe_now+=100
 void dm_gfx_shot_at(long frames,const char *path){(void)frames;(void)path;runtime_fail("unexpected screenshot in unit probe");}
 void dm_gfx_passdump_next(long n){(void)n;runtime_fail("unexpected pass dump in unit probe");}
 void dm_gfx_texdump_next(const char *path){(void)path;runtime_fail("unexpected texture dump in unit probe");}
-static int help_toggles,interp_toggles,output_cycles,aspect_toggles,taa_toggles;   // keys 1 / 2 / 3 / 4 / 5 (see the key checks)
+static int help_toggles,interp_toggles,output_cycles,aspect_toggles,taa_toggles,keepalive_sets;   // keys 1 / 2 / 3 / 4 / 5 / 6 (see the key checks)
+/* The GPU keep-alive target (nvn_mtl.m): 1000 µs by default, 0 while eco is on. */
+static int keepalive_us=1000;
+int mtl_keepalive_target_us(void){return keepalive_us;}
 void runtime_swkbd_selftest(void){runtime_fail("unexpected keyboard self-test in unit probe");}
 void runtime_dump_threads(void){runtime_fail("unexpected thread dump in unit probe");}
 void runtime_hle_trace_set(int mode){(void)mode;runtime_fail("unexpected host-call trace in unit probe");}
@@ -22,7 +25,10 @@ void runtime_shortcut_help_toggle(void){help_toggles++;}
 int runtime_output_mode_cycle(void){output_cycles++;return 1;}
 int runtime_aspect_toggle(void){aspect_toggles++;return 1;}
 void taa_toggle(void){taa_toggles++;}
-void dm_gfx_set_flag(const char *name,int v){if(!strcmp(name,"mfx_interp")&&v==-1){interp_toggles++;return;}runtime_fail("unexpected runtime flag in unit probe");}
+void dm_gfx_set_flag(const char *name,int v){
+ if(!strcmp(name,"mfx_interp")&&v==-1){interp_toggles++;return;}
+ if(!strcmp(name,"keepalive_us")){if(v&&(v<100||v>1000))runtime_fail("keepalive_us out of range");keepalive_us=v;keepalive_sets++;return;}
+ runtime_fail("unexpected runtime flag in unit probe");}
 void dm_gfx_querylog_next(long n){(void)n;runtime_fail("unexpected query log in unit probe");}
 void dm_gfx_anomdump(void){runtime_fail("unexpected anomaly dump in unit probe");}
 void dm_gfx_window_shot(const char *p){(void)p;runtime_fail("unexpected window shot in unit probe");}
@@ -145,19 +151,23 @@ int main(void){
   need(out.state.buttons==(1ULL<<(12+i))&&!out.state.lx&&!out.state.ly&&!out.state.rx&&!out.state.ry,"D-pad independent of analog sticks");
   runtime_input_key(dpad[i],0);read(&out.state,1,&id);need(!out.state.buttons,"D-pad release");
  }
- /* Keys 1-5 (Mac key codes 18-21, 23): one action per press; held-key repeats and the release do nothing more; no game
+ /* Keys 1-6 (Mac key codes 18-22, 23): one action per press; held-key repeats and the release do nothing more; no game
     button; each key touches only its own action. 1 shows / hides the overlays (frontend.m), 2 frame interpolation (runtime
     flag mfx_interp, v = -1), 3 the picture mode (game_patches*.c), 4 the ultrawide aspect ratio (aspect_patch.h), 5 edge
-    smoothing (totk_taa.m). */
- static const unsigned keys[5]={18,19,20,21,23};int *count[5]={&help_toggles,&interp_toggles,&output_cycles,&aspect_toggles,&taa_toggles};
- static const char *const pressed[5]={"key 1 toggles the overlays (only)","key 2 toggles frame interpolation (only)","key 3 cycles the picture mode (only)","key 4 toggles ultrawide (only)","key 5 toggles edge smoothing (only)"};
- for(int k=0;k<5;k++){
-  runtime_input_key(keys[k],1);for(int j=0;j<5;j++)need(*count[j]==(j<k?2:j==k?1:0),pressed[k]);
+    smoothing (totk_taa.m), 6 eco (GPU keep-alive off, runtime flag keepalive_us). */
+ static const unsigned keys[6]={18,19,20,21,23,22};int *count[6]={&help_toggles,&interp_toggles,&output_cycles,&aspect_toggles,&taa_toggles,&keepalive_sets};
+ static const char *const pressed[6]={"key 1 toggles the overlays (only)","key 2 toggles frame interpolation (only)","key 3 cycles the picture mode (only)","key 4 toggles ultrawide (only)","key 5 toggles edge smoothing (only)","key 6 toggles eco (only)"};
+ for(int k=0;k<6;k++){
+  runtime_input_key(keys[k],1);for(int j=0;j<6;j++)need(*count[j]==(j<k?2:j==k?1:0),pressed[k]);
   runtime_input_key(keys[k],1);need(*count[k]==1,"a held key (auto-repeat) does not act again");
-  read(&out.state,1,&id);need(!out.state.buttons&&!out.state.lx&&!out.state.ly,"keys 1-5 are no controller input");
+  read(&out.state,1,&id);need(!out.state.buttons&&!out.state.lx&&!out.state.ly,"keys 1-6 are no controller input");
   runtime_input_key(keys[k],0);need(*count[k]==1,"releasing the key does not act");
   runtime_input_key(keys[k],1);runtime_input_key(keys[k],0);need(*count[k]==2,"every press acts");
  }
+ need(keepalive_us==1000&&!runtime_eco_enabled(),"key 6 leaves the GPU keep-alive as it found it (eco off)");
+ keepalive_us=500;
+ runtime_input_key(22,1);runtime_input_key(22,0);need(keepalive_us==0&&keepalive_sets==3&&runtime_eco_enabled(),"key 6 turns the GPU keep-alive off (eco on)");
+ runtime_input_key(22,1);runtime_input_key(22,0);need(keepalive_us==500&&keepalive_sets==4&&!runtime_eco_enabled(),"key 6 restores the value that was active (eco off)");
  id=1;read(&out.state,1,&id);need(!out.state.attr&&!out.state.buttons,"unattached controller");
  for(unsigned i=0;i<32;i++)need(out.guard[i]==0xa5,"state output guard");
  /* Handheld mode (the iPhone): the input is the handheld controller (id 0x20, style bit 1); player 1 is not connected. */
@@ -172,5 +182,5 @@ int main(void){
  runtime_input_key(38,1);runtime_input_key(38,0);need(hread(&out.state,1,&hid)==1&&out.state.buttons==1&&out.state.attr==1,"handheld short tap latched");
  read(&out.state,1,&id);need(!out.state.attr&&!out.state.buttons,"handheld mode: player 1 not attached");
  feedback_checks();
- puts("{\"status\":\"pass\",\"scope\":\"input service state ABI, rumble and six-axis hid answers (on by default, off with =0 and in agent test sessions, left/right handles, batches, mute flags, newest-first states, orientation in the controller frame, gravity pull, axis remap), short tap latch, keyboard axes, four D-pad directions, focus clear of keyboard and controller, key 1 overlays / key 2 frame interpolation / key 3 picture mode / key 4 ultrawide / key 5 edge smoothing (once per press), unattached controller, handheld mode controller; no game control flow\"}");
+ puts("{\"status\":\"pass\",\"scope\":\"input service state ABI, rumble and six-axis hid answers (on by default, off with =0 and in agent test sessions, left/right handles, batches, mute flags, newest-first states, orientation in the controller frame, gravity pull, axis remap), short tap latch, keyboard axes, four D-pad directions, focus clear of keyboard and controller, key 1 overlays / key 2 frame interpolation / key 3 picture mode / key 4 ultrawide / key 5 edge smoothing / key 6 eco (once per press, restores the keep-alive target), unattached controller, handheld mode controller; no game control flow\"}");
 }

@@ -12,10 +12,13 @@ void mfxup_output_set(int on);
 void shortcut_test_output_init(void);
 void shortcut_test_output_size(unsigned w, unsigned h);
 
+static int keepalive_us = 1000;
+int mtl_keepalive_target_us(void) { return keepalive_us; }
 void dm_gfx_set_flag(const char *name, int value) {
     if (!strcmp(name, "mfx_interp")) mfx_set(value);
     else if (!strcmp(name, "mfx_output")) mfxup_output_set(value);
     else if (!strcmp(name, "mfx_upscale")) mfxup_set(value);
+    else if (!strcmp(name, "keepalive_us")) keepalive_us = value;
     else abort();
 }
 void shortcut_test_aspect_init(double view);
@@ -67,6 +70,9 @@ int main(int argc, const char **argv) { @autoreleasepool {
     expect(panel, @"Edge smoothing (MetalFX Temporal): off");
     press(23); tick(); expect(panel, @"Edge smoothing (MetalFX Temporal): on");
     press(23); tick(); expect(panel, @"Edge smoothing (MetalFX Temporal): off");
+    expect(panel, @"Eco (GPU keep-alive off): off");
+    press(22); tick(); expect(panel, @"Eco (GPU keep-alive off): on"); assert(keepalive_us == 0);
+    press(22); tick(); expect(panel, @"Eco (GPU keep-alive off): off"); assert(keepalive_us == 1000);
     expect(panel, @"Aspect ratio: 16:9");
     shortcut_test_aspect_init(1.6);   /* key 4 becomes available; a 16:10 window */
     press(21); tick(); expect(panel, @"Aspect ratio: fit to window 1.60:1");
@@ -78,6 +84,7 @@ int main(int argc, const char **argv) { @autoreleasepool {
     mfx_set(MFX_HALF); mfx_latch();
     setenv("TOTK_UI_LANG", "zh", 1); tick();
     expect(panel, @"补帧：当前 刷新率一半"); expect(panel, @"画质：当前 原生 2K");
+    expect(panel, @"节能（GPU 保活关闭）：关");
 
     if (hud_compact()) {
         assert(panel.frame.size.width < host.bounds.size.width - 20);

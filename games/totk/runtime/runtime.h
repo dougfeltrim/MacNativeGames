@@ -101,6 +101,7 @@ void runtime_game_slot_acquire(const char *mode);   /* runtime/game_slot.c: one 
 void *runtime_front_override(const char *name);
 int runtime_front_focus(void);
 void runtime_shortcut_help_toggle(void);
+int runtime_eco_enabled(void);   /* key 6: the GPU keep-alive is off (runtime/input.c) */
 int fps_overlay_toggle_hints(void);   /* key 1: all -> minimal (FPS only) -> off; returns the new mode, 0 = off */
 int fps_overlay_hud_mode(void);
 int fps_overlay_full_hud(void);
